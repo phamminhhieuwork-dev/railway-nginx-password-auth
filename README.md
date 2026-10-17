@@ -123,6 +123,28 @@ On Railway, check the deployment logs in your project dashboard.
      nginx-revproxy
    ```
 
+## Logging and OAuth callback secrets
+
+The Google OAuth callback (`/api/auth/callback/google`) carries a one-time `code` and a `state` in its query string.
+To keep them out of Railway logs:
+
+- `access_log` uses the `safe_access` format: method, **path only** (`$uri`, no query), status, bytes, latency (`rt=`),
+  upstream status (`us=`), the Referer with its query stripped, and `auth=0|1` (whether an Authorization header was
+  sent, never its value).
+- nginx cannot redact `error_log`: every request-scoped entry (upstream refused, timeout, DNS failure, ...) includes the
+  request line and upstream URL with the query. Errors for the exact callback location are therefore discarded
+  (`error_log /dev/null emerg;` inside that location). A callback failure is still visible as status / `us=` / `rt=` in the
+  access log, and the underlying cause (DNS, upstream down) shows up in the error log for other paths, whose URLs carry no
+  OAuth secrets.
+- Residual risk: request-scoped `error_log` entries of *other* locations still contain their own query strings.
+
+Test (Python 3, standard library only; synthetic canary values):
+
+```
+python3 tests/oauth_log_redaction.py --mode docker --template nginx.conf.template        # real image, as in CI
+python3 tests/oauth_log_redaction.py --mode local --nginx "$(which nginx)" --template nginx.conf.template
+```
+
 ## License
 
 MIT License - feel free to use this in your projects!
