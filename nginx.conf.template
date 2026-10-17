@@ -6,7 +6,7 @@ server {
     listen [::]:80;
 
     # Add DNS resolver - dynamically configured by entrypoint script
-    resolver ${DNS_RESOLVER} valid=300s;
+    resolver ${DNS_RESOLVER} valid=10s;
     resolver_timeout 5s;
 
     # Upstream is supplied via env var ORIGIN (e.g., http://app:3000)
