@@ -1,0 +1,35 @@
+name: OAuth log redaction
+
+on:
+  pull_request:
+    paths:
+      - nginx.conf.template
+      - Dockerfile
+      - docker-entrypoint.sh
+      - tests/**
+      - .github/workflows/oauth-log-redaction.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  redaction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Builds the real nginx:1.27-alpine image from this repo and reads `docker logs`.
+      # Synthetic canary values only; no real OAuth data.
+      - name: Callback code/state never reach access or error logs
+        run: python3 tests/oauth_log_redaction.py --mode docker --template nginx.conf.template
+
+      # Proves the test can fail: the template from the PR base must leak.
+      - name: Sensitivity - template without the fix leaks
+        if: github.event_name == 'pull_request'
+        run: |
+          git show "${{ github.event.pull_request.base.sha }}:nginx.conf.template" > "$RUNNER_TEMP/base.template"
+          python3 tests/oauth_log_redaction.py --mode docker --template "$RUNNER_TEMP/base.template" --expect-leak

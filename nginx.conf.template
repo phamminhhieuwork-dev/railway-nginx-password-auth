@@ -1,9 +1,33 @@
 # This is loaded by the official nginx image from /etc/nginx/conf.d/*
 # The docker entrypoint below will envsubst this template to /etc/nginx/conf.d/reverse.conf
 
+# Access log that never records the query string. The Google OAuth callback carries the
+# one-time authorization `code` and `state` in its URL; the stock `main` format logs the
+# whole `$request` line (and `$http_referer`), so those values would land in Railway logs.
+# `$uri` is the path only. Path, method, status, upstream status and latency stay available.
+# The Referer keeps scheme/host/path and drops any query/fragment (the callback error page
+# links back to /login, and browsers send the full same-origin URL as Referer).
+map $http_referer $referer_no_query {
+    default "-";
+    ""      "-";
+    "~^(?<referer_base>[^?#]*)" $referer_base;
+}
+
+# 1 when the client sent an Authorization header, else 0 (presence only, never the value).
+map $http_authorization $auth_present {
+    default 1;
+    ""      0;
+}
+
+log_format safe_access '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" '
+                       '$status $body_bytes_sent "$referer_no_query" "$http_user_agent" "$http_x_forwarded_for" '
+                       'rt=$request_time urt=$upstream_response_time us=$upstream_status auth=$auth_present';
+
 server {
     listen 80;
     listen [::]:80;
+
+    access_log /dev/stdout safe_access;
 
     # Add DNS resolver - dynamically configured by entrypoint script
     resolver ${DNS_RESOLVER} valid=10s;
@@ -21,6 +45,13 @@ server {
     location = /api/auth/callback/google {
         auth_basic off;
         proxy_http_version 1.1;
+
+        # nginx writes the full request line and the upstream URL, including ?code=...&state=...,
+        # into every request-scoped error_log entry (upstream refused/timeout/DNS failure, ...)
+        # and cannot redact them. Errors for this exact path therefore go nowhere; they remain
+        # visible without secrets as status/us/rt in the access log, and the underlying cause
+        # (DNS, upstream down) is logged by other locations with query-free URLs.
+        error_log /dev/null emerg;
 
         proxy_ssl_server_name on;
         proxy_ssl_name $proxy_host;
