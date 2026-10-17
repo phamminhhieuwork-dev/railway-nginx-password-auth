@@ -67,7 +67,7 @@ else
 fi
 
 # Detect DNS resolver to use - Railway uses IPv6 DNS for private networking
-DNS_RESOLVER="127.0.0.11 8.8.8.8 8.8.4.4"
+DNS_RESOLVER="127.0.0.11"
 
 # Check if we're in Railway (or similar container platform with internal DNS)
 if [[ -f /etc/resolv.conf ]]; then
@@ -87,8 +87,9 @@ if [[ -f /etc/resolv.conf ]]; then
   done <<< "$(grep '^nameserver' /etc/resolv.conf | awk '{print $2}')"
   
   if [[ -n "$FORMATTED_NAMESERVERS" ]]; then
-    # Use system nameservers first, then fallback to public DNS
-    DNS_RESOLVER="$FORMATTED_NAMESERVERS 8.8.8.8 8.8.4.4"
+    # Chỉ dùng nameserver của hệ thống (Railway: DNS riêng fd12::10). KHÔNG thêm DNS công cộng: nginx xoay vòng giữa
+    # các resolver, mà DNS công cộng trả NXDOMAIN cho tên *.railway.internal -> 502 "Host not found" ngẫu nhiên.
+    DNS_RESOLVER="$FORMATTED_NAMESERVERS"
     echo "[entrypoint] Using system DNS resolvers: $FORMATTED_NAMESERVERS"
   else
     echo "[entrypoint] No system nameservers found, using default resolvers"
