@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression test: nginx forwards exactly ONE client IP in X-Forwarded-For (the LEFT-most entry of the edge-built header,
-accepted only in the edge's 1- or 2-entry shape), so Better Auth in meeting-ai rate-limits per client, not one shared bucket.
+accepted only in the edge's 1- or 2-entry shape with BOTH entries strict IP literals), so Better Auth in meeting-ai
+rate-limits per client, not one shared bucket. Anything else falls back to the TCP peer.
 
 Synthetic addresses only (RFC 5737 / RFC 3849 documentation ranges). Python standard library only. Reuses the nginx
 launcher of tests/oauth_log_redaction.py (local binary or the real image).
@@ -10,7 +11,7 @@ launcher of tests/oauth_log_redaction.py (local binary or the real image).
   # sensitivity: the template without the fix must forward a multi-value header
   python3 tests/client_ip_normalization.py --mode docker --template base.template --expect-multi
 """
-import argparse, http.client, os, subprocess, sys, time
+import argparse, http.client, ipaddress, os, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import oauth_log_redaction as olr  # noqa: E402
@@ -59,7 +60,52 @@ CASES = [
     ("malformed: port suffix -> TCP peer", ["198.51.100.9:443"], PEER),
     ("malformed: leading comma -> TCP peer", [", 198.51.100.9"], PEER),
     ("empty header -> TCP peer", [""], PEER),
+    ("IPv4 octet > 255 -> TCP peer", ["256.1.1.1"], PEER),
+    ("IPv4 last octet > 255 -> TCP peer", ["198.51.100.999"], PEER),
+    ("IPv4 too few octets -> TCP peer", ["198.51.100"], PEER),
+    ("IPv4 too many octets -> TCP peer", ["198.51.100.9.1"], PEER),
+    ("IPv4 leading zero -> TCP peer", ["198.051.100.9"], PEER),
+    ("IPv6 triple colon -> TCP peer", ["2001:db8:::1"], PEER),
+    ("IPv6 two '::' -> TCP peer", ["2001:db8::1::2"], PEER),
+    ("IPv6 9 groups -> TCP peer", ["1:2:3:4:5:6:7:8:9"], PEER),
+    ("IPv6 7 groups, no '::' -> TCP peer", ["1:2:3:4:5:6:7"], PEER),
+    ("IPv6 5-digit group -> TCP peer", ["12345::1"], PEER),
+    ("IPv6 non-hex -> TCP peer", ["g::1"], PEER),
+    ("IPv6 zone id -> TCP peer", ["fe80::1%eth0"], PEER),
+    ("IPv6 brackets -> TCP peer", ["[2001:db8::1]"], PEER),
+    ("IPv4-mapped with bad IPv4 -> TCP peer", ["::ffff:999.1.1.1"], PEER),
+    ("IPv6 full 8 groups", ["2001:db8:0:0:1:0:0:1"], "2001:db8:0:0:1:0:0:1"),
+    ("IPv6 6 groups + IPv4", ["2001:db8:0:0:0:0:198.51.100.9"], "2001:db8:0:0:0:0:198.51.100.9"),
+    ("malformed second hop: name -> TCP peer", ["198.51.100.9, evil.example"], PEER),
+    ("malformed second hop: octet > 255 -> TCP peer", ["198.51.100.9, 192.0.2.256"], PEER),
+    ("malformed second hop: bad IPv6 -> TCP peer", ["198.51.100.9, 2001:db8:::1"], PEER),
+    ("empty second hop (trailing comma) -> TCP peer", ["198.51.100.9,"], PEER),
+    ("4 entries -> TCP peer", ["203.0.113.7, 203.0.113.8, 198.51.100.9, 192.0.2.200"], PEER),
+    ("three header lines (= 3 entries) -> TCP peer", ["203.0.113.7", "198.51.100.9", "192.0.2.200"], PEER),
 ]
+
+# Generated cases: the strict map must agree with Python's ipaddress parser (zone IDs excluded) for a single entry, as the
+# first entry and as the CDN hop.
+ORACLE_TOKENS = ["0.0.0.0", "255.255.255.255", "203.0.113.255", "1.2.3.04", "1..2.3", "::", "::1", "1::", "1:2:3:4:5:6:7::",
+                 "::2:3:4:5:6:7:8", "2001:DB8::ABCD", "FFFF::", ":1", ":::", "::ffff:0:198.51.100.9", "64:ff9b::192.0.2.33",
+                 "::198.51.100.9", "1:2:3:4:5::1.2.3.4", "1:2:3:4:5:6::1.2.3.4", "1:2:3:4:5:6:7:1.2.3.4", "::1.2.3", "1.2.3.4/32"]
+
+
+def oracle_valid(t):
+    if "%" in t:
+        return False
+    try:
+        ipaddress.ip_address(t)
+        return True
+    except ValueError:
+        return False
+
+
+for t in ORACLE_TOKENS:
+    ok = oracle_valid(t)
+    CASES.append((f"oracle single '{t}'", [t], t if ok else PEER))
+    CASES.append((f"oracle first '{t}' + CDN hop", [f"{t}, 192.0.2.200"], t if ok else PEER))
+    CASES.append((f"oracle CDN hop '{t}'", [f"198.51.100.9, {t}"], "198.51.100.9" if ok else PEER))
 
 
 def main():

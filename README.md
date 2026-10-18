@@ -151,7 +151,7 @@ MIT License - feel free to use this in your projects!
 
 ## Client IP forwarded to the app (rate limiting)
 nginx sends the app exactly ONE address in `X-Forwarded-For`: the LEFT-most entry of the incoming header, accepted only when
-the header has the Railway edge's shape (1 or 2 entries: `<client>` or `<client>, <CDN hop>`) and the entry is a valid IPv4/IPv6
-literal; otherwise `$remote_addr`. Railway's HTTP edge overwrites client-supplied `X-Forwarded-For`, so the left-most entry is
+the header has the Railway edge's shape (1 or 2 entries: `<client>` or `<client>, <CDN hop>`) and BOTH entries are strict
+IPv4 (octets 0-255) / IPv6 (incl. compressed and IPv4-mapped) literals without ports, brackets or zone IDs; otherwise `$remote_addr`. Railway's HTTP edge overwrites client-supplied `X-Forwarded-For`, so the left-most entry is
 not caller-controlled on public ingress. It is only safe while meeting-ai has no ingress other than this proxy (requests over
 `*.railway.internal` skip the edge). Tested by `tests/client_ip_normalization.py`. The access log carries `cip=`.
