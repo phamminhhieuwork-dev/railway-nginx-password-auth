@@ -31,11 +31,12 @@ jobs:
       - name: X-Forwarded-For normalized to one client IP
         run: python3 tests/client_ip_normalization.py --mode docker --template nginx.conf.template
 
-      # Proves the test can fail: the template from the PR base must leak.
+      # Proves the test can fail: the last template WITHOUT the redaction fix must leak. Pinned (not the PR base): once the
+      # fix is in the base branch, the base template no longer leaks. efccac5 = callback exemption, before redaction.
       - name: Sensitivity - template without the fix leaks
         if: github.event_name == 'pull_request'
         run: |
-          git show "${{ github.event.pull_request.base.sha }}:nginx.conf.template" > "$RUNNER_TEMP/base.template"
+          git show "efccac5549a86ce2671954a8f5b92329734066ca:nginx.conf.template" > "$RUNNER_TEMP/base.template"
           python3 tests/oauth_log_redaction.py --mode docker --template "$RUNNER_TEMP/base.template" --expect-leak
 
       - name: Sensitivity - template without the fix forwards a multi-value X-Forwarded-For
