@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Regression test: nginx forwards exactly ONE client IP in X-Forwarded-For (the right-most incoming entry, i.e. the
-address the Railway edge appended), so Better Auth in meeting-ai rate-limits per client instead of one shared bucket.
+"""Regression test: nginx forwards exactly ONE client IP in X-Forwarded-For (the LEFT-most entry of the edge-built header,
+accepted only in the edge's 1- or 2-entry shape), so Better Auth in meeting-ai rate-limits per client, not one shared bucket.
 
 Synthetic addresses only (RFC 5737 / RFC 3849 documentation ranges). Python standard library only. Reuses the nginx
 launcher of tests/oauth_log_redaction.py (local binary or the real image).
@@ -45,17 +45,19 @@ def send(p, path, xff_headers, auth=False):
 PEER = "127.0.0.1"
 CASES = [
     ("no X-Forwarded-For -> TCP peer", [], PEER),
-    ("edge-appended single IPv4", ["198.51.100.9"], "198.51.100.9"),
-    ("client spoof + edge append -> edge value", ["203.0.113.7, 198.51.100.9"], "198.51.100.9"),
-    ("multi-hop spoof chain -> right-most", ["10.0.0.1, 203.0.113.7,192.0.2.44 , 198.51.100.9"], "198.51.100.9"),
-    ("IPv6 client", ["2001:db8::5"], "2001:db8::5"),
-    ("IPv4 spoof + IPv6 edge append", ["203.0.113.7, 2001:db8:0:1::abcd"], "2001:db8:0:1::abcd"),
+    ("edge direct: single IPv4", ["198.51.100.9"], "198.51.100.9"),
+    ("edge via CDN: client, shared CDN IP -> client", ["198.51.100.9, 192.0.2.200"], "198.51.100.9"),
+    ("same CDN IP, different clients stay apart (A)", ["198.51.100.9, 192.0.2.200"], "198.51.100.9"),
+    ("same CDN IP, different clients stay apart (B)", ["198.51.100.77, 192.0.2.200"], "198.51.100.77"),
+    ("unexpected shape: 3 entries -> TCP peer", ["203.0.113.7, 198.51.100.9, 192.0.2.200"], PEER),
+    ("IPv6 client direct", ["2001:db8::5"], "2001:db8::5"),
+    ("IPv6 client via IPv4 CDN", ["2001:db8:0:1::abcd, 192.0.2.200"], "2001:db8:0:1::abcd"),
     ("IPv4-mapped IPv6", ["::ffff:198.51.100.9"], "::ffff:198.51.100.9"),
-    ("two header lines -> right-most of the last", ["203.0.113.7", "198.51.100.9"], "198.51.100.9"),
+    ("two header lines (= 2 entries) -> first", ["198.51.100.9", "192.0.2.200"], "198.51.100.9"),
     ("malformed: not an IP -> TCP peer", ["not-an-ip"], PEER),
-    ("malformed: trailing comma -> TCP peer", ["198.51.100.9, "], PEER),
-    ("malformed: IP then garbage -> TCP peer", ["198.51.100.9, evil.example"], PEER),
+    ("malformed: first not an IP -> TCP peer", ["evil.example, 198.51.100.9"], PEER),
     ("malformed: port suffix -> TCP peer", ["198.51.100.9:443"], PEER),
+    ("malformed: leading comma -> TCP peer", [", 198.51.100.9"], PEER),
     ("empty header -> TCP peer", [""], PEER),
 ]
 
@@ -89,7 +91,7 @@ def main():
             check(send(p, CB, [])[0] == 200, "callback still exempt from Basic Auth")
             check(send(p, CB + "/", [])[0] == 401 and send(p, CB + "x", [])[0] == 401, "callback exemption still exact")
             access, _ = p.logs()
-            check(" cip=198.51.100.9" in access and " cip=2001:db8::5" in access, "access log records the normalized client IP (cip=)")
+            check(" cip=198.51.100.9" in access and " cip=198.51.100.77" in access and " cip=2001:db8::5" in access, "access log records the normalized client IP (cip=)")
             check("not-an-ip" in access and " cip=not-an-ip" not in access, "a malformed header is logged as received but never used as cip")
     finally:
         p.stop(); up.shutdown()

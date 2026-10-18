@@ -150,9 +150,8 @@ python3 tests/oauth_log_redaction.py --mode local --nginx "$(which nginx)" --tem
 MIT License - feel free to use this in your projects!
 
 ## Client IP forwarded to the app (rate limiting)
-nginx sends the app exactly ONE address in `X-Forwarded-For`: the right-most entry of the incoming header (the address the
-Railway edge appended for the connection it received), validated as an IPv4/IPv6 literal, else `$remote_addr`. Client-supplied
-entries to its left are discarded. This lets meeting-ai (Better Auth) rate-limit per client instead of one shared bucket.
-It is only safe while the Railway edge always appends or overwrites `X-Forwarded-For` and meeting-ai has no ingress other than
-this proxy. Tested by `tests/client_ip_normalization.py`. The access log carries `cip=<forwarded client IP>`.
-
+nginx sends the app exactly ONE address in `X-Forwarded-For`: the LEFT-most entry of the incoming header, accepted only when
+the header has the Railway edge's shape (1 or 2 entries: `<client>` or `<client>, <CDN hop>`) and the entry is a valid IPv4/IPv6
+literal; otherwise `$remote_addr`. Railway's HTTP edge overwrites client-supplied `X-Forwarded-For`, so the left-most entry is
+not caller-controlled on public ingress. It is only safe while meeting-ai has no ingress other than this proxy (requests over
+`*.railway.internal` skip the edge). Tested by `tests/client_ip_normalization.py`. The access log carries `cip=`.
